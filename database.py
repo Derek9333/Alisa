@@ -1,178 +1,116 @@
 import sqlite3
-import os
-import logging
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 
-# Настройка логгирования
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+DB_PATH = 'botdata.db'
+_LOCK = threading.Lock()
 
-DB_FILE = "bot_data.db"
+def _connect():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-def init_db():
-    """Инициализация базы данных и создание таблиц"""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            
-            # Таблица рефералов
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS referrals (
-                    invited_id INTEGER PRIMARY KEY,
-                    referrer_id INTEGER NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-            ''')
-            
-            # Таблица бонусных сообщений
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS bonus_messages (
-                    user_id INTEGER PRIMARY KEY,
-                    bonus_count INTEGER NOT NULL DEFAULT 0,
-                    updated_at TEXT NOT NULL
-                )
-            ''')
-            
-            # Таблица счетчиков сообщений (для ежедневных лимитов)
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS daily_counters (
-                    user_id INTEGER,
-                    date TEXT,
-                    count INTEGER DEFAULT 0,
-                    PRIMARY KEY (user_id, date)
-                )
-            ''')
-            
-            conn.commit()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Error initializing database: {e}")
-
-def add_referral(invited_id: int, referrer_id: int):
-    """Добавление реферальной связи"""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT OR IGNORE INTO referrals (invited_id, referrer_id, created_at) VALUES (?, ?, ?)",
-                (invited_id, referrer_id, datetime.utcnow().isoformat())
+def _ensure_tables():
+    with _LOCK:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS referrals (
+                user_id INTEGER PRIMARY KEY,
+                referrer_id INTEGER,
+                joined_at TEXT
             )
-            conn.commit()
-        logger.info(f"Referral added: invited_id={invited_id}, referrer_id={referrer_id}")
-    except Exception as e:
-        logger.error(f"Error adding referral: {e}")
-
-def get_referrer_id(invited_id: int) -> int:
-    """Получение ID реферера для пользователя"""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT referrer_id FROM referrals WHERE invited_id = ?",
-                (invited_id,)
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS bonuses (
+                user_id INTEGER PRIMARY KEY,
+                bonus_count INTEGER DEFAULT 0
             )
-            result = cursor.fetchone()
-            return result[0] if result else None
-    except Exception as e:
-        logger.error(f"Error getting referrer ID: {e}")
-        return None
-
-def get_referral_count(referrer_id: int) -> int:
-    """Получение количества рефералов для пользователя"""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT COUNT(*) FROM referrals WHERE referrer_id = ?",
-                (referrer_id,)
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS daily_counters (
+                user_id INTEGER,
+                day TEXT,
+                count INTEGER DEFAULT 0,
+                PRIMARY KEY (user_id, day)
             )
-            result = cursor.fetchone()
-            return result[0] if result else 0
-    except Exception as e:
-        logger.error(f"Error getting referral count: {e}")
-        return 0
+        ''')
+        conn.commit()
+        conn.close()
 
-def set_bonus_count(user_id: int, bonus_count: int):
-    """Установка количества бонусных сообщений для пользователя"""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                '''INSERT OR REPLACE INTO bonus_messages 
-                (user_id, bonus_count, updated_at) 
-                VALUES (?, ?, ?)''',
-                (user_id, bonus_count, datetime.utcnow().isoformat())
-            )
-            conn.commit()
-        logger.info(f"Bonus count set: user_id={user_id}, count={bonus_count}")
-    except Exception as e:
-        logger.error(f"Error setting bonus count: {e}")
+_ensure_tables()
 
-def get_bonus_count(user_id: int) -> int:
-    """Получение количества бонусных сообщений для пользователя"""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT bonus_count FROM bonus_messages WHERE user_id = ?",
-                (user_id,)
-            )
-            result = cursor.fetchone()
-            return result[0] if result else 0
-    except Exception as e:
-        logger.error(f"Error getting bonus count: {e}")
-        return 0
+def add_referral(user_id, referrer_id):
+    with _LOCK:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute('INSERT OR IGNORE INTO referrals (user_id, referrer_id, joined_at) VALUES (?, ?, ?)', (user_id, referrer_id, datetime.utcnow().isoformat()))
+        conn.commit()
+        conn.close()
 
-def increment_daily_counter(user_id: int, date: str):
-    """Увеличение счетчика сообщений для пользователя на указанную дату"""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            # Увеличиваем счетчик или создаем новую запись
-            cursor.execute(
-                '''INSERT INTO daily_counters (user_id, date, count)
-                VALUES (?, ?, 1)
-                ON CONFLICT(user_id, date) DO UPDATE SET count = count + 1''',
-                (user_id, date)
-            )
-            conn.commit()
-    except Exception as e:
-        logger.error(f"Error incrementing daily counter: {e}")
+def get_referrer_id(user_id):
+    with _LOCK:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute('SELECT referrer_id FROM referrals WHERE user_id = ?', (user_id,))
+        row = cur.fetchone()
+        conn.close()
+        return row['referrer_id'] if row else None
 
-def get_daily_counter(user_id: int, date: str) -> int:
-    """Получение счетчика сообщений для пользователя на указанную дату"""
-    try:
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT count FROM daily_counters WHERE user_id = ? AND date = ?",
-                (user_id, date)
-            )
-            result = cursor.fetchone()
-            return result[0] if result else 0
-    except Exception as e:
-        logger.error(f"Error getting daily counter: {e}")
-        return 0
+def get_referral_count(user_id):
+    # count how many users this user invited
+    with _LOCK:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute('SELECT COUNT(*) as c FROM referrals WHERE referrer_id = ?', (user_id,))
+        row = cur.fetchone()
+        conn.close()
+        return row['c'] if row else 0
 
-def cleanup_old_counters():
-    """Очистка устаревших счетчиков сообщений (старше 1 дня)"""
-    try:
-        today = datetime.utcnow().date()
-        cutoff_date = (today - timedelta(days=1)).isoformat()
-        
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "DELETE FROM daily_counters WHERE date < ?",
-                (cutoff_date,)
-            )
-            conn.commit()
-        logger.info("Old counters cleaned up successfully")
-    except Exception as e:
-        logger.error(f"Error cleaning up old counters: {e}")
+def set_bonus_count(user_id, count):
+    with _LOCK:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute('INSERT OR REPLACE INTO bonuses (user_id, bonus_count) VALUES (?, ?)', (user_id, count))
+        conn.commit()
+        conn.close()
 
-# Инициализируем базу данных при импорте модуля
-init_db()
+def get_bonus_count(user_id):
+    with _LOCK:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute('SELECT bonus_count FROM bonuses WHERE user_id = ?', (user_id,))
+        row = cur.fetchone()
+        conn.close()
+        return row['bonus_count'] if row else 0
+
+def increment_daily_counter(user_id, day):
+    with _LOCK:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute('SELECT count FROM daily_counters WHERE user_id = ? AND day = ?', (user_id, day))
+        row = cur.fetchone()
+        if row:
+            cur.execute('UPDATE daily_counters SET count = count + 1 WHERE user_id = ? AND day = ?', (user_id, day))
+        else:
+            cur.execute('INSERT INTO daily_counters (user_id, day, count) VALUES (?, ?, 1)', (user_id, day))
+        conn.commit()
+        conn.close()
+
+def get_daily_counter(user_id, day):
+    with _LOCK:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute('SELECT count FROM daily_counters WHERE user_id = ? AND day = ?', (user_id, day))
+        row = cur.fetchone()
+        conn.close()
+        return row['count'] if row else 0
+
+def cleanup_old_counters(days=7):
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime('%Y-%m-%d')
+    with _LOCK:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute('DELETE FROM daily_counters WHERE day < ?', (cutoff,))
+        conn.commit()
+        conn.close()
