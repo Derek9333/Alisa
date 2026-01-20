@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import asyncio
 import threading
@@ -25,18 +26,6 @@ from telegram.ext import (
     CallbackQueryHandler
 )
 from database import (
-# --- Added by fixer: clearer environment checks ---
-import os, sys, logging
-logging.basicConfig(level=logging.INFO)
-_missing = []
-if not os.environ.get('TG_TOKEN'):
-    _missing.append('TG_TOKEN (Telegram bot token)')
-if not os.environ.get('VOAPI_API_KEY'):
-    logging.warning('VOAPI_API_KEY not set; VoAPI calls will fail unless passed explicitly.')
-if _missing:
-    logging.error('Missing required environment variables: %s', ', '.join(_missing))
-    sys.exit(1)
-# --- end added checks ---
     add_referral,
     get_referrer_id,
     get_referral_count,
@@ -46,6 +35,17 @@ if _missing:
     get_daily_counter,
     cleanup_old_counters
 )
+
+# Проверка обязательных переменных окружения
+logging.basicConfig(level=logging.INFO)
+_missing = []
+if not os.environ.get('TG_TOKEN'):
+    _missing.append('TG_TOKEN (Telegram bot token)')
+if not os.environ.get('VOAPI_API_KEY'):
+    logging.warning('VOAPI_API_KEY not set; VoAPI calls will fail unless passed explicitly.')
+if _missing:
+    logging.error('Missing required environment variables: %s', ', '.join(_missing))
+    sys.exit(1)
 
 # Настройка логгирования
 logging.basicConfig(
