@@ -10,9 +10,9 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from openai import OpenAI
 from telegram import (
-    Update, 
-    InlineKeyboardButton, 
-    InlineKeyboardMarkup, 
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     BotCommand,
     constants
 )
@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 # Загрузка конфигурации
 TOKEN = os.getenv("TG_TOKEN")
 VOAPI_API_KEY = os.getenv("VOAPI_API_KEY")
+VOAPI_BASE_URL = os.getenv("VOAPI_BASE_URL")  # recommended to set to your VoAPI endpoint
 BOT_USERNAME = os.getenv("BOT_USERNAME", "@aliceneyrobot")
 
 # Идентификатор разработчика
@@ -96,33 +97,33 @@ except Exception as e:
 # Функция проверки лимита сообщений
 def check_message_limit(user_id: int) -> bool:
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    
+
     # Очистка старых записей перед проверкой
     global last_cleanup_time
     current_time = time.time()
     if current_time - last_cleanup_time > 1800:
         cleanup_old_counters()
         last_cleanup_time = current_time
-    
+
     # Базовый лимит
     base_limit = 35
-    
+
     # Бонус за рефералов
     referral_bonus = get_referral_count(user_id) * 3
-    
+
     # Постоянные бонусные сообщения
     bonus_messages = get_bonus_count(user_id)
-    
+
     # Общий доступный лимит
     total_limit = base_limit + referral_bonus + bonus_messages
-    
+
     # Получение текущего счетчика
     current_count = get_daily_counter(user_id, today)
-    
+
     # Проверка лимита
     if current_count >= total_limit:
         return False
-    
+
     return True
 
 # Функция для форматирования действий
@@ -133,7 +134,7 @@ def format_actions(text: str) -> str:
 def add_emojis(text: str) -> str:
     if not text:
         return text
-    
+
     if random.random() < 0.2:
         selected_emoji = random.choice(EMOJI_LIST)
         if text[-1] not in EMOJI_LIST:
@@ -144,35 +145,35 @@ def add_emojis(text: str) -> str:
 def complete_sentences(text: str) -> str:
     if not text:
         return text
-    
+
     if not re.search(r'[.!?…]$', text):
         text += '.'
-    
+
     return text
 
 # Функция для форматирования абзацев
 def format_paragraphs(text: str) -> str:
-    paragraphs = text.split('\\n\\n')
+    paragraphs = text.split('\n\n')
     formatted = []
     for paragraph in paragraphs:
         if paragraph.strip():
-            cleaned = re.sub(r'\\s+', ' ', paragraph).strip()
+            cleaned = re.sub(r'\s+', ' ', paragraph).strip()
             formatted.append(cleaned)
-    
-    return '\\n\\n'.join(formatted)
+
+    return '\n\n'.join(formatted)
 
 # Функция для очистки ответа
 def clean_response(response: str) -> str:
     cleaned = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
     cleaned = cleaned.replace('<think>', '').replace('</think>', '')
     cleaned = cleaned.replace('</s>', '').replace('<s>', '')
-    
+
     cleaned = format_actions(cleaned)
-    cleaned = re.sub(r'\\n\\s*\\n', '\\n\\n', cleaned).strip()
+    cleaned = re.sub(r'\n\s*\n', '\n\n', cleaned).strip()
     cleaned = complete_sentences(cleaned)
     cleaned = format_paragraphs(cleaned)
     cleaned = add_emojis(cleaned)
-    
+
     return cleaned
 
 # HTTP-сервер для проверки работоспособности
@@ -182,7 +183,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
         self.wfile.write(b'Service is alive')
-    
+
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -197,40 +198,41 @@ def run_http_server(port=8080):
 def query_chat(messages: list) -> str:
     try:
         client = OpenAI(
-            base_url="https://api.voapi.ai/v3/openai",
+            base_url=VOAPI_BASE_URL,  # will be taken from env if not passed
             api_key=VOAPI_API_KEY,
         )
-        
+
         response = client.chat.completions.create(
-            model="deepseek-ai-DeepSeek-R1",
+            model="deepseek/deepseek-r1",
             messages=messages,
             temperature=0.7,
             max_tokens=600,
             stream=False,
             response_format={"type": "text"}
         )
+
         # Try multiple common response structures
         if isinstance(response, dict):
-            # OpenAI-like structure
-            choices = response.get("choices")
+            choices = response.get("choices") or []
             if choices:
                 first = choices[0]
-                # nested message.content
+                # OpenAI style message object
                 if isinstance(first, dict):
-                    msg = first.get("message") or first.get("delta") or first.get("text") or first.get("content")
-                    if isinstance(msg, dict):
-                        return msg.get("content") or msg.get("text") or str(msg)
-                    if isinstance(msg, str):
+                    # check for nested message.content
+                    msg = None
+                    if 'message' in first and isinstance(first['message'], dict):
+                        msg = first['message'].get('content')
+                    if not msg and 'text' in first:
+                        msg = first.get('text')
+                    if not msg and 'delta' in first and isinstance(first['delta'], dict):
+                        msg = first['delta'].get('content') or first['delta'].get('text')
+                    if msg:
                         return msg
-                # if choice has 'text' directly
-                if "text" in first:
-                    return first.get("text")
-            # fallback to direct text
-            if "text" in response:
-                return response["text"]
-            return str(response)
-        # If it's an object with attributes (like SDK), try to access choices
+                # fallback: string representation
+                return str(first)
+        # If it's an SDK-like object with attributes
         try:
+            # object with .choices[0].message.content
             return response.choices[0].message.content
         except Exception:
             return str(response)
@@ -238,24 +240,24 @@ def query_chat(messages: list) -> str:
         logger.error(f"VoAPI API error: {e}")
         return "Произошла ошибка при обработке запроса. Попробуйте позже."
 
-# Обработчик команды /buy
+# Остальные обработчики команд и логика бота остаются без изменений
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     card_number = "2202 2068 3215 2552"
-    
+
     text = (
-        "💎 <b>Здесь вы можете купить запросы</b> 💎\\n\\n"
-        "❓ <b>Как оплатить запросы в боте?</b> ❓\\n"
-        "- 10 рублей = 1 запрос.\\n"
-        f"- Вам необходимо отправить нужную сумму на карту: <code>{card_number}</code>\\n"
-        f"- В сообщении к переводу обязательно укажите ваш Telegram ID: <code>{user.id}</code>\\n"
-        "- В течении некоторого времени вам будут начислены бонусные запросы в боте.\\n"
+        "💎 <b>Здесь вы можете купить запросы</b> 💎\n\n"
+        "❓ <b>Как оплатить запросы в боте?</b> ❓\n"
+        "- 10 рублей = 1 запрос.\n"
+        f"- Вам необходимо отправить нужную сумму на карту: <code>{card_number}</code>\n"
+        f"- В сообщении к переводу обязательно укажите ваш Telegram ID: <code>{user.id}</code>\n"
+        "- В течении некоторого времени вам будут начислены бонусные запросы в боте.\n"
         "- Если у вас возникли проблемы или вы хотите задать вопросы по покупке запросов, "
         "то вы можете связаться напрямую с разработчиком - <a href='https://t.me/odinnadsat'>odinnadsat</a>"
     )
-    
-    await update.message.reply_text(text, parse_mode="HTML")
 
+    await update.message.reply_text(text, parse_mode="HTML")
+    
 # Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
