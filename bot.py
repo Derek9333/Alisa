@@ -1,3 +1,4 @@
+
 import os
 import sys
 import logging
@@ -152,14 +153,14 @@ def complete_sentences(text: str) -> str:
 
 # Функция для форматирования абзацев
 def format_paragraphs(text: str) -> str:
-    paragraphs = text.split('\n\n')
+    paragraphs = text.split('\\n\\n')
     formatted = []
     for paragraph in paragraphs:
         if paragraph.strip():
-            cleaned = re.sub(r'\s+', ' ', paragraph).strip()
+            cleaned = re.sub(r'\\s+', ' ', paragraph).strip()
             formatted.append(cleaned)
     
-    return '\n\n'.join(formatted)
+    return '\\n\\n'.join(formatted)
 
 # Функция для очистки ответа
 def clean_response(response: str) -> str:
@@ -168,7 +169,7 @@ def clean_response(response: str) -> str:
     cleaned = cleaned.replace('</s>', '').replace('<s>', '')
     
     cleaned = format_actions(cleaned)
-    cleaned = re.sub(r'\n\s*\n', '\n\n', cleaned).strip()
+    cleaned = re.sub(r'\\n\\s*\\n', '\\n\\n', cleaned).strip()
     cleaned = complete_sentences(cleaned)
     cleaned = format_paragraphs(cleaned)
     cleaned = add_emojis(cleaned)
@@ -209,7 +210,31 @@ def query_chat(messages: list) -> str:
             stream=False,
             response_format={"type": "text"}
         )
-        return response.choices[0].message.content
+        # Try multiple common response structures
+        if isinstance(response, dict):
+            # OpenAI-like structure
+            choices = response.get("choices")
+            if choices:
+                first = choices[0]
+                # nested message.content
+                if isinstance(first, dict):
+                    msg = first.get("message") or first.get("delta") or first.get("text") or first.get("content")
+                    if isinstance(msg, dict):
+                        return msg.get("content") or msg.get("text") or str(msg)
+                    if isinstance(msg, str):
+                        return msg
+                # if choice has 'text' directly
+                if "text" in first:
+                    return first.get("text")
+            # fallback to direct text
+            if "text" in response:
+                return response["text"]
+            return str(response)
+        # If it's an object with attributes (like SDK), try to access choices
+        try:
+            return response.choices[0].message.content
+        except Exception:
+            return str(response)
     except Exception as e:
         logger.error(f"VoAPI API error: {e}")
         return "Произошла ошибка при обработке запроса. Попробуйте позже."
@@ -220,12 +245,12 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     card_number = "2202 2068 3215 2552"
     
     text = (
-        "💎 <b>Здесь вы можете купить запросы</b> 💎\n\n"
-        "❓ <b>Как оплатить запросы в боте?</b> ❓\n"
-        "- 10 рублей = 1 запрос.\n"
-        f"- Вам необходимо отправить нужную сумму на карту: <code>{card_number}</code>\n"
-        f"- В сообщении к переводу обязательно укажите ваш Telegram ID: <code>{user.id}</code>\n"
-        "- В течении некоторого времени вам будут начислены бонусные запросы в боте.\n"
+        "💎 <b>Здесь вы можете купить запросы</b> 💎\\n\\n"
+        "❓ <b>Как оплатить запросы в боте?</b> ❓\\n"
+        "- 10 рублей = 1 запрос.\\n"
+        f"- Вам необходимо отправить нужную сумму на карту: <code>{card_number}</code>\\n"
+        f"- В сообщении к переводу обязательно укажите ваш Telegram ID: <code>{user.id}</code>\\n"
+        "- В течении некоторого времени вам будут начислены бонусные запросы в боте.\\n"
         "- Если у вас возникли проблемы или вы хотите задать вопросы по покупке запросов, "
         "то вы можете связаться напрямую с разработчиком - <a href='https://t.me/odinnadsat'>odinnadsat</a>"
     )
@@ -243,10 +268,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"New referral: user {user.id} invited by {referrer_id}")
     
     await update.message.reply_text(
-        "Привет, меня зовут Алиса, если посмеешь относиться ко мне неуважительно то получишь пару крепких ударов!\n\n"
-        "/info - информация обо мне и как правильно ко мне обращаться.\n"
-        "/stat - узнать свой статус и оставшиеся сообщения\n"
-        "/ref - ваша реферальная программа\n"
+        "Привет, меня зовут Алиса, если посмеешь относиться ко мне неуважительно то получишь пару крепких ударов!\\n\\n"
+        "/info - информация обо мне и как правильно ко мне обращаться.\\n"
+        "/stat - узнать свой статус и оставшиеся сообщения\\n"
+        "/ref - ваша реферальная программа\\n"
         "/buy - купить дополнительные запросы"
     )
 
@@ -257,7 +282,7 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "❗️Здесь вы можете ознакомиться с правилами использования нашего бота.\n"
+        "❗️Здесь вы можете ознакомиться с правилами использования нашего бота.\\n"
         "Рекомендуем прочитать перед использованием.",
         reply_markup=reply_markup
     )
@@ -276,12 +301,12 @@ async def ref_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_limit = base_limit + referral_bonus + bonus_messages
     
     await update.message.reply_text(
-        f"👥 <b>Ваша реферальная программа</b>\n\n"
-        f"• Ваша ссылка: <code>{ref_link}</code>\n"
-        f"• Приглашено пользователей: {count}\n"
-        f"• Каждый приглашенный пользователь увеличивает ваш дневной лимит на +3 сообщения\n"
-        f"• Текущий доступный лимит: <b>{total_limit}</b> сообщений в день\n\n"
-        f"Поделитесь своей ссылкой с друзьями, чтобы увеличить количество доступных сообщений!\n\n"
+        f"👥 <b>Ваша реферальная программа</b>\\n\\n"
+        f"• Ваша ссылка: <code>{ref_link}</code>\\n"
+        f"• Приглашено пользователей: {count}\\n"
+        f"• Каждый приглашенный пользователь увеличивает ваш дневной лимит на +3 сообщения\\n"
+        f"• Текущий доступный лимит: <b>{total_limit}</b> сообщений в день\\n\\n"
+        f"Поделитесь своей ссылкой с друзьями, чтобы увеличить количество доступных сообщений!\\n\\n"
         f"💎 Также вы можете <b>купить дополнительные запросы</b> командой /buy",
         parse_mode="HTML"
     )
@@ -316,20 +341,20 @@ async def stat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Проверяем, является ли чат безлимитным
     is_unlimited = update.message.chat_id == UNLIMITED_CHAT_ID
     
-    unlimited_info = "\n• Вы находитесь в безлимитном чате" if is_unlimited else ""
+    unlimited_info = "\\n• Вы находитесь в безлимитном чате" if is_unlimited else ""
     
     message = (
-        f"📊 <b>Ваш статус:</b>\n"
-        f"{unlimited_info}\n\n"
-        f"• Базовый лимит: {base_limit}\n"
-        f"• Бонус за рефералов: +{referral_bonus} (приглашено: {referral_count})\n"
-        f"• Бонусные сообщения: +{bonus_messages}\n"
-        f"• Итого доступно: <b>{total_limit}</b>\n"
-        f"• Использовано: {used_messages}\n"
-        f"• Осталось: <b>{remaining}</b>\n\n"
-        f"• История диалога: {'сохранена' if has_context else 'отсутствует'}\n\n"
-        f"💡 Для сброса истории используйте /clear\n"
-        f"👥 Приглашайте друзей: /ref\n"
+        f"📊 <b>Ваш статус:</b>\\n"
+        f"{unlimited_info}\\n\\n"
+        f"• Базовый лимит: {base_limit}\\n"
+        f"• Бонус за реферов: +{referral_bonus} (приглашено: {referral_count})\\n"
+        f"• Бонусные сообщения: +{bonus_messages}\\n"
+        f"• Итого доступно: <b>{total_limit}</b>\\n"
+        f"• Использовано: {used_messages}\\n"
+        f"• Осталось: <b>{remaining}</b>\\n\\n"
+        f"• История диалога: {'сохранена' if has_context else 'отсутствует'}\\n\\n"
+        f"💡 Для сброса истории используйте /clear\\n"
+        f"👥 Приглашайте друзей: /ref\\n"
         f"💎 Купить дополнительные запросы: /buy"
     )
     
@@ -345,7 +370,7 @@ async def dev(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     await update.message.reply_text(
-        "🔧 <b>Режим разработчика</b>\n\n"
+        "🔧 <b>Режим разработчика</b>\\n\\n"
         "Введите ID пользователя, с которым хотите работать:",
         parse_mode="HTML"
     )
@@ -370,7 +395,7 @@ async def select_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        f"👤 Выбран пользователь с ID: {user_id}\n"
+        f"👤 Выбран пользователь с ID: {user_id}\\n"
         "Выберите действие:",
         reply_markup=reply_markup
     )
@@ -422,10 +447,10 @@ async def input_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_limit = base_limit + referral_bonus + new_bonus
     
     report = (
-        f"✅ Успешно!\n\n"
-        f"• Пользователь ID: {target_user_id}\n"
-        f"• Действие: {action_result} {amount} бонусных сообщений\n"
-        f"• Текущие бонусные сообщения: {new_bonus}\n"
+        f"✅ Успешно!\\n\\n"
+        f"• Пользователь ID: {target_user_id}\\n"
+        f"• Действие: {action_result} {amount} бонусных сообщений\\n"
+        f"• Текущие бонусные сообщения: {new_bonus}\\n"
         f"• Общий доступный лимит: {total_limit} ({base_limit} базовых + {referral_bonus} реферальных + {new_bonus} бонусных)"
     )
     
@@ -484,11 +509,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_limit = base_limit + referral_bonus + bonus_messages
             
             await message.reply_text(
-                f"❗️Вы достигли ежедневного лимита на общение с Алисой ({total_limit} сообщений).\n"
+                f"❗️Вы достигли ежедневного лимита на общение с Алисой ({total_limit} сообщений).\\n"
                 "Возвращайтесь завтра или продолжите безлимитно ей пользоваться в чате - "
-                "https://t.me/freedom346\n\n"
-                "Или вы можете:\n"
-                "• Увеличить число дневных запросов через реферальную программу: /ref\n"
+                "https://t.me/freedom346\\n\\n"
+                "Или вы можете:\\n"
+                "• Увеличить число дневных запросов через реферальную программу: /ref\\n"
                 "• Купить дополнительные запросы: /buy"
             )
             return
