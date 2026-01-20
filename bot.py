@@ -86,7 +86,7 @@ except Exception as e:
 import os
 import requests
 
-VOAPI_API_URL = os.environ.get("VOAPI_API_URL", "https://api.openai-hk.com/v1")
+VOAPI_API_URL = os.environ.get("VOAPI_API_URL", "https://free.v36.cm")
 VOAPI_API_KEY = os.environ.get("VOAPI_API_KEY", os.environ.get("NOVITA_API_KEY", ""))  # fallback
 LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-r1")
 
