@@ -88,7 +88,7 @@ import requests
 
 VOAPI_API_URL = os.environ.get("VOAPI_API_URL", "https://api.openai-hk.com/v1")
 VOAPI_API_KEY = os.environ.get("VOAPI_API_KEY", os.environ.get("NOVITA_API_KEY", ""))  # fallback
-LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-ai-deepseek-r1")
+LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-r1")
 
 def query_chat_voapi(messages, timeout=60):
     """
