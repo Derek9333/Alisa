@@ -1,10 +1,3 @@
-
-# Added by migration: prefer using voapi_adapter.chat_completion for VoAPI provider
-try:
-    from voapi_adapter import chat_completion as voapi_chat_completion
-except Exception:
-    voapi_chat_completion = None
-
 import os
 import logging
 import asyncio
