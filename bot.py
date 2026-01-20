@@ -86,9 +86,9 @@ except Exception as e:
 import os
 import requests
 
-VOAPI_API_URL = os.environ.get("VOAPI_API_URL", "deepseek/deepseek-r1-0528:free")
+VOAPI_API_URL = os.environ.get("VOAPI_API_URL", "https://openrouter.ai/api/v1")
 VOAPI_API_KEY = os.environ.get("VOAPI_API_KEY", os.environ.get("NOVITA_API_KEY", ""))  # fallback
-LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-r1")
+LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek/deepseek-r1-0528:free")
 
 def query_chat_voapi(messages, timeout=60):
     """
