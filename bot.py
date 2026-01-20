@@ -1,5 +1,4 @@
 import os
-import sys
 import logging
 import asyncio
 import threading
@@ -8,11 +7,10 @@ import re
 import random
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from openai import OpenAI
 from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
+    Update, 
+    InlineKeyboardButton, 
+    InlineKeyboardMarkup, 
     BotCommand,
     constants
 )
@@ -36,17 +34,6 @@ from database import (
     cleanup_old_counters
 )
 
-# Проверка обязательных переменных окружения
-logging.basicConfig(level=logging.INFO)
-_missing = []
-if not os.environ.get('TG_TOKEN'):
-    _missing.append('TG_TOKEN (Telegram bot token)')
-if not os.environ.get('VOAPI_API_KEY'):
-    logging.warning('VOAPI_API_KEY not set; VoAPI calls will fail unless passed explicitly.')
-if _missing:
-    logging.error('Missing required environment variables: %s', ', '.join(_missing))
-    sys.exit(1)
-
 # Настройка логгирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -56,8 +43,7 @@ logger = logging.getLogger(__name__)
 
 # Загрузка конфигурации
 TOKEN = os.getenv("TG_TOKEN")
-VOAPI_API_KEY = os.getenv("VOAPI_API_KEY")
-VOAPI_BASE_URL = os.getenv("VOAPI_BASE_URL")  # recommended to set to your VoAPI endpoint
+NOVITA_API_KEY = os.getenv("NOVITA_API_KEY")
 BOT_USERNAME = os.getenv("BOT_USERNAME", "@aliceneyrobot")
 
 # Идентификатор разработчика
@@ -95,35 +81,78 @@ except Exception as e:
               "Форматируй ответы с абзацами и отступами, где это уместно."
 
 # Функция проверки лимита сообщений
+
+# ---------- VoAPI compatibility layer (injected) ----------
+import os
+import requests
+
+VOAPI_API_URL = os.environ.get("VOAPI_API_URL", "https://demo.voapi.top/v1")
+VOAPI_API_KEY = os.environ.get("VOAPI_API_KEY", os.environ.get("NOVITA_API_KEY", ""))  # fallback
+LLM_MODEL = os.environ.get("LLM_MODEL", "deepseek-ai-deepseek-r1")
+
+def query_chat_voapi(messages, timeout=60):
+    """
+    Make a POST to an OpenAI-compatible chat endpoint on VoAPI.
+    Returns the assistant text or raises an exception.
+    """
+    url = VOAPI_API_URL.rstrip('/') + "/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {VOAPI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": LLM_MODEL,
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 800,
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    # Try OpenAI-compatible response shape
+    if isinstance(data, dict):
+        # choices -> message -> content
+        try:
+            return data["choices"][0]["message"]["content"]
+        except Exception:
+            # fallback: choices[0].text
+            try:
+                return data["choices"][0]["text"]
+            except Exception:
+                # return full json if nothing matched
+                return json.dumps(data, ensure_ascii=False)
+    return str(data)
+# ---------- end of injection ----------
+
 def check_message_limit(user_id: int) -> bool:
     today = datetime.utcnow().strftime("%Y-%m-%d")
-
+    
     # Очистка старых записей перед проверкой
     global last_cleanup_time
     current_time = time.time()
     if current_time - last_cleanup_time > 1800:
         cleanup_old_counters()
         last_cleanup_time = current_time
-
+    
     # Базовый лимит
     base_limit = 35
-
+    
     # Бонус за рефералов
     referral_bonus = get_referral_count(user_id) * 3
-
+    
     # Постоянные бонусные сообщения
     bonus_messages = get_bonus_count(user_id)
-
+    
     # Общий доступный лимит
     total_limit = base_limit + referral_bonus + bonus_messages
-
+    
     # Получение текущего счетчика
     current_count = get_daily_counter(user_id, today)
-
+    
     # Проверка лимита
     if current_count >= total_limit:
         return False
-
+    
     return True
 
 # Функция для форматирования действий
@@ -134,7 +163,7 @@ def format_actions(text: str) -> str:
 def add_emojis(text: str) -> str:
     if not text:
         return text
-
+    
     if random.random() < 0.2:
         selected_emoji = random.choice(EMOJI_LIST)
         if text[-1] not in EMOJI_LIST:
@@ -145,10 +174,10 @@ def add_emojis(text: str) -> str:
 def complete_sentences(text: str) -> str:
     if not text:
         return text
-
+    
     if not re.search(r'[.!?…]$', text):
         text += '.'
-
+    
     return text
 
 # Функция для форматирования абзацев
@@ -159,7 +188,7 @@ def format_paragraphs(text: str) -> str:
         if paragraph.strip():
             cleaned = re.sub(r'\s+', ' ', paragraph).strip()
             formatted.append(cleaned)
-
+    
     return '\n\n'.join(formatted)
 
 # Функция для очистки ответа
@@ -167,13 +196,13 @@ def clean_response(response: str) -> str:
     cleaned = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL)
     cleaned = cleaned.replace('<think>', '').replace('</think>', '')
     cleaned = cleaned.replace('</s>', '').replace('<s>', '')
-
+    
     cleaned = format_actions(cleaned)
     cleaned = re.sub(r'\n\s*\n', '\n\n', cleaned).strip()
     cleaned = complete_sentences(cleaned)
     cleaned = format_paragraphs(cleaned)
     cleaned = add_emojis(cleaned)
-
+    
     return cleaned
 
 # HTTP-сервер для проверки работоспособности
@@ -183,7 +212,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
         self.wfile.write(b'Service is alive')
-
+    
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -194,57 +223,12 @@ def run_http_server(port=8080):
     logger.info(f"Starting HTTP health check server on port {port}")
     httpd.serve_forever()
 
-# Запрос к DeepSeek через VoAPI API
-def query_chat(messages: list) -> str:
-    try:
-        client = OpenAI(
-            base_url=VOAPI_BASE_URL,  # will be taken from env if not passed
-            api_key=VOAPI_API_KEY,
-        )
 
-        response = client.chat.completions.create(
-            model="deepseek/deepseek-r1",
-            messages=messages,
-            temperature=0.7,
-            max_tokens=600,
-            stream=False,
-            response_format={"type": "text"}
-        )
-
-        # Try multiple common response structures
-        if isinstance(response, dict):
-            choices = response.get("choices") or []
-            if choices:
-                first = choices[0]
-                # OpenAI style message object
-                if isinstance(first, dict):
-                    # check for nested message.content
-                    msg = None
-                    if 'message' in first and isinstance(first['message'], dict):
-                        msg = first['message'].get('content')
-                    if not msg and 'text' in first:
-                        msg = first.get('text')
-                    if not msg and 'delta' in first and isinstance(first['delta'], dict):
-                        msg = first['delta'].get('content') or first['delta'].get('text')
-                    if msg:
-                        return msg
-                # fallback: string representation
-                return str(first)
-        # If it's an SDK-like object with attributes
-        try:
-            # object with .choices[0].message.content
-            return response.choices[0].message.content
-        except Exception:
-            return str(response)
-    except Exception as e:
-        logger.error(f"VoAPI API error: {e}")
-        return "Произошла ошибка при обработке запроса. Попробуйте позже."
-
-# Остальные обработчики команд и логика бота остаются без изменений
+# Обработчик команды /buy
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     card_number = "2202 2068 3215 2552"
-
+    
     text = (
         "💎 <b>Здесь вы можете купить запросы</b> 💎\n\n"
         "❓ <b>Как оплатить запросы в боте?</b> ❓\n"
@@ -255,9 +239,9 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Если у вас возникли проблемы или вы хотите задать вопросы по покупке запросов, "
         "то вы можете связаться напрямую с разработчиком - <a href='https://t.me/odinnadsat'>odinnadsat</a>"
     )
-
-    await update.message.reply_text(text, parse_mode="HTML")
     
+    await update.message.reply_text(text, parse_mode="HTML")
+
 # Обработчики команд
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -269,10 +253,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"New referral: user {user.id} invited by {referrer_id}")
     
     await update.message.reply_text(
-        "Привет, меня зовут Алиса, если посмеешь относиться ко мне неуважительно то получишь пару крепких ударов!\\n\\n"
-        "/info - информация обо мне и как правильно ко мне обращаться.\\n"
-        "/stat - узнать свой статус и оставшиеся сообщения\\n"
-        "/ref - ваша реферальная программа\\n"
+        "Привет, меня зовут Алиса, если посмеешь относиться ко мне неуважительно то получишь пару крепких ударов!\n\n"
+        "/info - информация обо мне и как правильно ко мне обращаться.\n"
+        "/stat - узнать свой статус и оставшиеся сообщения\n"
+        "/ref - ваша реферальная программа\n"
         "/buy - купить дополнительные запросы"
     )
 
@@ -283,7 +267,7 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "❗️Здесь вы можете ознакомиться с правилами использования нашего бота.\\n"
+        "❗️Здесь вы можете ознакомиться с правилами использования нашего бота.\n"
         "Рекомендуем прочитать перед использованием.",
         reply_markup=reply_markup
     )
@@ -302,12 +286,12 @@ async def ref_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_limit = base_limit + referral_bonus + bonus_messages
     
     await update.message.reply_text(
-        f"👥 <b>Ваша реферальная программа</b>\\n\\n"
-        f"• Ваша ссылка: <code>{ref_link}</code>\\n"
-        f"• Приглашено пользователей: {count}\\n"
-        f"• Каждый приглашенный пользователь увеличивает ваш дневной лимит на +3 сообщения\\n"
-        f"• Текущий доступный лимит: <b>{total_limit}</b> сообщений в день\\n\\n"
-        f"Поделитесь своей ссылкой с друзьями, чтобы увеличить количество доступных сообщений!\\n\\n"
+        f"👥 <b>Ваша реферальная программа</b>\n\n"
+        f"• Ваша ссылка: <code>{ref_link}</code>\n"
+        f"• Приглашено пользователей: {count}\n"
+        f"• Каждый приглашенный пользователь увеличивает ваш дневной лимит на +3 сообщения\n"
+        f"• Текущий доступный лимит: <b>{total_limit}</b> сообщений в день\n\n"
+        f"Поделитесь своей ссылкой с друзьями, чтобы увеличить количество доступных сообщений!\n\n"
         f"💎 Также вы можете <b>купить дополнительные запросы</b> командой /buy",
         parse_mode="HTML"
     )
@@ -342,20 +326,20 @@ async def stat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Проверяем, является ли чат безлимитным
     is_unlimited = update.message.chat_id == UNLIMITED_CHAT_ID
     
-    unlimited_info = "\\n• Вы находитесь в безлимитном чате" if is_unlimited else ""
+    unlimited_info = "\n• Вы находитесь в безлимитном чате" if is_unlimited else ""
     
     message = (
-        f"📊 <b>Ваш статус:</b>\\n"
-        f"{unlimited_info}\\n\\n"
-        f"• Базовый лимит: {base_limit}\\n"
-        f"• Бонус за реферов: +{referral_bonus} (приглашено: {referral_count})\\n"
-        f"• Бонусные сообщения: +{bonus_messages}\\n"
-        f"• Итого доступно: <b>{total_limit}</b>\\n"
-        f"• Использовано: {used_messages}\\n"
-        f"• Осталось: <b>{remaining}</b>\\n\\n"
-        f"• История диалога: {'сохранена' if has_context else 'отсутствует'}\\n\\n"
-        f"💡 Для сброса истории используйте /clear\\n"
-        f"👥 Приглашайте друзей: /ref\\n"
+        f"📊 <b>Ваш статус:</b>\n"
+        f"{unlimited_info}\n\n"
+        f"• Базовый лимит: {base_limit}\n"
+        f"• Бонус за рефералов: +{referral_bonus} (приглашено: {referral_count})\n"
+        f"• Бонусные сообщения: +{bonus_messages}\n"
+        f"• Итого доступно: <b>{total_limit}</b>\n"
+        f"• Использовано: {used_messages}\n"
+        f"• Осталось: <b>{remaining}</b>\n\n"
+        f"• История диалога: {'сохранена' if has_context else 'отсутствует'}\n\n"
+        f"💡 Для сброса истории используйте /clear\n"
+        f"👥 Приглашайте друзей: /ref\n"
         f"💎 Купить дополнительные запросы: /buy"
     )
     
@@ -371,7 +355,7 @@ async def dev(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     await update.message.reply_text(
-        "🔧 <b>Режим разработчика</b>\\n\\n"
+        "🔧 <b>Режим разработчика</b>\n\n"
         "Введите ID пользователя, с которым хотите работать:",
         parse_mode="HTML"
     )
@@ -396,7 +380,7 @@ async def select_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        f"👤 Выбран пользователь с ID: {user_id}\\n"
+        f"👤 Выбран пользователь с ID: {user_id}\n"
         "Выберите действие:",
         reply_markup=reply_markup
     )
@@ -448,10 +432,10 @@ async def input_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_limit = base_limit + referral_bonus + new_bonus
     
     report = (
-        f"✅ Успешно!\\n\\n"
-        f"• Пользователь ID: {target_user_id}\\n"
-        f"• Действие: {action_result} {amount} бонусных сообщений\\n"
-        f"• Текущие бонусные сообщения: {new_bonus}\\n"
+        f"✅ Успешно!\n\n"
+        f"• Пользователь ID: {target_user_id}\n"
+        f"• Действие: {action_result} {amount} бонусных сообщений\n"
+        f"• Текущие бонусные сообщения: {new_bonus}\n"
         f"• Общий доступный лимит: {total_limit} ({base_limit} базовых + {referral_bonus} реферальных + {new_bonus} бонусных)"
     )
     
@@ -510,11 +494,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_limit = base_limit + referral_bonus + bonus_messages
             
             await message.reply_text(
-                f"❗️Вы достигли ежедневного лимита на общение с Алисой ({total_limit} сообщений).\\n"
+                f"❗️Вы достигли ежедневного лимита на общение с Алисой ({total_limit} сообщений).\n"
                 "Возвращайтесь завтра или продолжите безлимитно ей пользоваться в чате - "
-                "https://t.me/freedom346\\n\\n"
-                "Или вы можете:\\n"
-                "• Увеличить число дневных запросов через реферальную программу: /ref\\n"
+                "https://t.me/freedom346\n\n"
+                "Или вы можете:\n"
+                "• Увеличить число дневных запросов через реферальную программу: /ref\n"
                 "• Купить дополнительные запросы: /buy"
             )
             return
@@ -537,7 +521,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         messages.append(user_message)
         
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(None, query_chat, messages)
+        response = await loop.run_in_executor(None, query_chat_voapi, messages)
         cleaned_response = clean_response(response)
         
         if not cleaned_response.strip():
