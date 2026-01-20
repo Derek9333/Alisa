@@ -1,4 +1,5 @@
-"""Local shim to provide a minimal OpenAI-like interface expected by the project.
+"""
+Local shim to provide a minimal OpenAI-like interface expected by the project.
 
 This shim delegates chat completions to voapi_adapter.chat_completion(...).
 If you want to use the official OpenAI SDK, remove/rename this file and install 'openai' package.
@@ -23,5 +24,5 @@ class _CompletionsProxy:
 class OpenAI:
     def __init__(self, api_key=None, base_url=None, **kwargs):
         self.api_key = api_key or os.environ.get('VOAPI_API_KEY')
-        self.base_url = base_url or os.environ.get('VOAPI_BASE_URL') or 'https://api.voapi.ai/v3/openai'
+        self.base_url = base_url or os.environ.get('VOAPI_BASE_URL') or ''
         self.chat = type('C', (), {'completions': _CompletionsProxy(self)})()
