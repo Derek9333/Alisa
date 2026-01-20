@@ -58,7 +58,6 @@ def get_referrer_id(user_id):
         return row['referrer_id'] if row else None
 
 def get_referral_count(user_id):
-    # count how many users this user invited
     with _LOCK:
         conn = _connect()
         cur = conn.cursor()
